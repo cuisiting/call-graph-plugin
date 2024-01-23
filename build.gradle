@@ -7,7 +7,7 @@ plugins {
 group 'com.jetbrains'
 //version '0.0.0' // plugin version, update me! (specified in plugins.xml instead)
 
-sourceCompatibility = 1.8
+sourceCompatibility = JavaVersion.VERSION_11
 
 repositories {
     maven{

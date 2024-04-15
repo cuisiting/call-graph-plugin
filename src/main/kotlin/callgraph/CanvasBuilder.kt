@@ -12,7 +12,7 @@ class CanvasBuilder {
     private val fileModifiedTimeCache = mutableMapOf<PsiFile, Long>()
 
     private var progressIndicator: ProgressIndicator? = null
-    private var dependenciesCache = emptySet<Dependency>()
+    private var callPairSetCache = emptySet<CallPair>()
     var LOGGER = com.intellij.openapi.diagnostic.Logger.getInstance(CanvasBuilder::class.java)
     fun build(canvasConfig: CanvasConfig) {
         // cancel existing progress if any
@@ -20,69 +20,41 @@ class CanvasBuilder {
         this.progressIndicator = ProgressIndicatorProvider.getGlobalProgressIndicator()
 
         LOGGER.debug("build call 1")
+        var workSpace = "/Users/cocui/toolchain/PythonProject/src/neo4j/data"
+        var allCallPairFile = File(workSpace+"/allCallPairFile.txt")
 
-        var file = File("/Users/cocui/i100/dependencies.txt")
-
-        if (file.exists()) {
-            file.delete()
+        if (allCallPairFile.exists()) {
+            allCallPairFile.delete()
         } else {
-            file.createNewFile()
+            allCallPairFile.createNewFile()
         }
         // build a dependency snapshot for the entire code base
-        val dependencies = getDependencies(canvasConfig, this.dependenciesCache, this.fileModifiedTimeCache)
-
-        file.appendText("all dependencies ---> :")
-
+        val dependencies = getCallPairSet(canvasConfig, this.callPairSetCache, this.fileModifiedTimeCache)
+        allCallPairFile.appendText("all allCallPairFile ---> :\n")
+        var methodAbsInfo :StringBuilder = StringBuilder()
         for ((index, dependency) in dependencies.withIndex()) {
-            var method_abs_info = ""
-            method_abs_info += "Caller: "+getMethodInfo(dependency.caller)
-            method_abs_info += "\n"
-            method_abs_info += "Callee: "+getMethodInfo(dependency.callee)
-            file.appendText("\n")
-            file.appendText("\n")
-            file.appendText(method_abs_info)
+            methodAbsInfo.append("Caller: "+getMethodInfo(dependency.caller))
+            methodAbsInfo.append("\n")
+            methodAbsInfo.append("Callee: "+getMethodInfo(dependency.callee))
+            methodAbsInfo.append("\n")
+            methodAbsInfo.append("\n")
+            if(index % 30 == 29){
+                allCallPairFile.appendText(methodAbsInfo.toString())
+                methodAbsInfo.clear()
+            }
         }
-        file.appendText("\n")
-        file.appendText("all dependencies <--- :")
+        allCallPairFile.appendText("\n")
+        allCallPairFile.appendText("all allCallPairFile <--- :")
 
-        // visualize the viewing part as graph
-        val sourceCodeRoots = Utils.getSourceCodeRoots(canvasConfig)
-        file.appendText("\n")
 
-        file.appendText("all sourceCodeRoots ---> :")
 
-        for ((index, sourceCodeRoot) in sourceCodeRoots.withIndex()) {
-            file.appendText("\n")
-            file.appendText(sourceCodeRoot.path)
-        }
-        file.appendText("\n")
 
-        file.appendText("all sourceCodeRoots <--- :")
-
-        val files = Utils.getSourceCodeFiles(canvasConfig.project, sourceCodeRoots)
-        file.appendText("\n")
-
-        file.appendText("all files ---> :")
-
-        for ((index, filep) in files.withIndex()) {
-            file.appendText("\n")
-            file.appendText(filep.name)
-        }
-        file.appendText("all files <--- :")
-
-        val methods = Utils.getMethodsInScope(canvasConfig, files)
-        LOGGER.debug("build call 1" + file.exists())
-
-        LOGGER.debug("build call 2")
-        val dependencyView = Utils.getDependencyView(canvasConfig, methods, dependencies)
-        val graph = buildGraph(methods, dependencyView)
-        canvasConfig.canvas.reset(graph)
     }
 
     private fun getMethodInfo(method: PsiMethod): String {
         var method_abs_info :StringBuilder= StringBuilder()
         method_abs_info.append(method.containingClass.toString())
-        method_abs_info.append( "-" + method.name)
+        method_abs_info.append( "::" + method.name)
         method_abs_info.append("(")
         // 获取参数列表
         val parameterList: PsiParameterList = method.getParameterList()
@@ -101,23 +73,11 @@ class CanvasBuilder {
         return method_abs_info.toString();
     }
 
-    private fun buildGraph(methods: Set<PsiMethod>, dependencyView: Set<Dependency>): Graph {
-        val graph = Graph()
-        methods.forEach { graph.addNode(it) }
-        dependencyView.forEach {
-            graph.addNode(it.caller)
-            graph.addNode(it.callee)
-            graph.addEdge(it.caller, it.callee)
-        }
-        Utils.layout(graph)
-        return graph
-    }
-
-    private fun getDependencies(
+    private fun getCallPairSet(
             canvasConfig: CanvasConfig,
-            dependenciesCache: Set<Dependency>,
+            dependenciesCache: Set<CallPair>,
             fileModifiedTimeCache: Map<PsiFile, Long>
-    ): Set<Dependency> {
+    ): Set<CallPair> {
         val allFiles = Utils.getAllSourceCodeFiles(canvasConfig.project)
         val newFiles = allFiles.filter { !fileModifiedTimeCache.containsKey(it) }
         val changedFiles = allFiles
@@ -146,7 +106,7 @@ class CanvasBuilder {
         val dependencies = validDependencies.union(newDependencies)
 
         // cache the dependencies for next use
-        this.dependenciesCache = dependencies
+        this.callPairSetCache = dependencies
         this.fileModifiedTimeCache.clear()
         this.fileModifiedTimeCache.putAll(allFiles.associateBy({ it }, { it.modificationStamp }))
 

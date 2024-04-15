@@ -32,37 +32,37 @@ object Utils {
     private const val normalizedGridSize = 0.1f
 
     fun getActiveProject(): Project? {
-        return ProjectManager.getInstance()
-                .openProjects
-                .firstOrNull { WindowManager.getInstance().suggestParentWindow(it)?.isActive ?: false }
+        return ProjectManager.getInstance().openProjects.firstOrNull {
+                    WindowManager.getInstance().suggestParentWindow(it)?.isActive ?: false
+                }
     }
 
     fun getActiveModules(project: Project): List<Module> {
         return ModuleManager.getInstance(project).modules.toList()
     }
 
-    fun getDependencyView(
-            canvasConfig: CanvasConfig,
-            methods: Set<PsiMethod>,
-            dependencies: Set<Dependency>
-    ): Set<Dependency> {
+    fun getDependencyView(canvasConfig: CanvasConfig, methods: Set<PsiMethod>, dependencies: Set<CallPair>): Set<CallPair> {
         return when (canvasConfig.buildType) {
             CanvasConfig.BuildType.WHOLE_PROJECT_WITH_TEST_LIMITED,
             CanvasConfig.BuildType.WHOLE_PROJECT_WITHOUT_TEST_LIMITED,
             CanvasConfig.BuildType.MODULE_LIMITED,
-            CanvasConfig.BuildType.DIRECTORY_LIMITED -> dependencies
-                    .filter { methods.contains(it.caller) && methods.contains(it.callee) }
-                    .toSet()
+            CanvasConfig.BuildType.DIRECTORY_LIMITED ->
+                dependencies
+                        .filter { methods.contains(it.caller) && methods.contains(it.callee) }
+                        .toSet()
+
             CanvasConfig.BuildType.WHOLE_PROJECT_WITH_TEST,
             CanvasConfig.BuildType.WHOLE_PROJECT_WITHOUT_TEST,
             CanvasConfig.BuildType.MODULE,
-            CanvasConfig.BuildType.DIRECTORY -> dependencies
-                    .filter { methods.contains(it.caller) || methods.contains(it.callee) }
-                    .toSet()
-            CanvasConfig.BuildType.UPSTREAM ->
-                getNestedDependencyView(dependencies, methods, mutableSetOf(), true)
-            CanvasConfig.BuildType.DOWNSTREAM ->
-                getNestedDependencyView(dependencies, methods, mutableSetOf(), false)
+            CanvasConfig.BuildType.DIRECTORY ->
+                dependencies
+                        .filter { methods.contains(it.caller) || methods.contains(it.callee) }
+                        .toSet()
+
+            CanvasConfig.BuildType.UPSTREAM -> getNestedDependencyView(dependencies, methods, mutableSetOf(), true)
+
+            CanvasConfig.BuildType.DOWNSTREAM -> getNestedDependencyView(dependencies, methods, mutableSetOf(), false)
+
             CanvasConfig.BuildType.UPSTREAM_DOWNSTREAM -> {
                 val upstream = getNestedDependencyView(dependencies, methods, mutableSetOf(), true)
                 val downstream = getNestedDependencyView(dependencies, methods, mutableSetOf(), false)
@@ -81,40 +81,35 @@ object Utils {
             CanvasConfig.BuildType.WHOLE_PROJECT_WITHOUT_TEST,
             CanvasConfig.BuildType.MODULE,
             CanvasConfig.BuildType.DIRECTORY -> getMethodsFromFiles(files)
+
             CanvasConfig.BuildType.UPSTREAM,
             CanvasConfig.BuildType.DOWNSTREAM,
             CanvasConfig.BuildType.UPSTREAM_DOWNSTREAM -> canvasConfig.focusedMethods
         }
     }
 
-    fun getMethodsFromFiles(files: Set<PsiFile>) =
-            files
-                    .flatMap { // get all classes
-                        try {
-                            (it as PsiJavaFile).classes.toList()
-                        }
-                        catch (e: ClassCastException) { // when file conversion to Java file type fails
-                            emptyList<PsiClass>()
-                        }
-                    }
-                    .flatMap { it.methods.toList() } // get all methods
-                    .toSet()
+    fun getClassRelationshipFiles(files: Set<PsiFile>) = files.flatMap { // get all classes
+        try {
+            (it as PsiJavaFile).classes.toList()
+        } catch (e: ClassCastException) { // when file conversion to Java file type fails
+            emptyList<PsiClass>()
+        }
+    }.flatMap { it.methods.toList() }.toSet()
 
-    fun getDependenciesFromMethod(method: PsiMethod) =
-            PsiTreeUtil
-                    .findChildrenOfType(method, PsiIdentifier::class.java)
-                    .mapNotNull { it.context }
-                    .flatMap { it.references.toList() }
-                    .map { it.resolve() }
-                    .filter { it is PsiMethod }
-                    .map { Dependency(method, it as PsiMethod) }
+    fun getMethodsFromFiles(files: Set<PsiFile>) = files.flatMap { // get all classes
+        try {
+            (it as PsiJavaFile).classes.toList()
+        } catch (e: ClassCastException) { // when file conversion to Java file type fails
+            emptyList<PsiClass>()
+        }
+    }.flatMap { it.methods.toList() } // get all methods
+            .toSet()
+
+    fun getDependenciesFromMethod(method: PsiMethod) = PsiTreeUtil.findChildrenOfType(method, PsiIdentifier::class.java).mapNotNull { it.context }.flatMap { it.references.toList() }.map { it.resolve() }.filter { it is PsiMethod }.map { CallPair(method, it as PsiMethod) }
 
     fun layout(graph: Graph) {
         // get connected components from the graph, and render each part separately
-        val subGraphBlueprints = graph.connectedComponents
-                .map { this.getLayoutFromGraphViz(it) }
-                .map { this.normalizeBlueprintGridSize(it) }
-                .toList()
+        val subGraphBlueprints = graph.connectedComponents.map { this.getLayoutFromGraphViz(it) }.map { this.normalizeBlueprintGridSize(it) }.toList()
 
         // merge all connected components to a single graph, then adjust node coordinates so they fit in the view
         val mergedBlueprint = this.mergeNormalizedLayouts(subGraphBlueprints)
@@ -123,12 +118,9 @@ object Utils {
     }
 
     fun runBackgroundTask(project: Project, runnable: Runnable) {
-        ProgressManager.getInstance()
-                .run(object: Task.Backgroundable(project, "Call Graph") {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Call Graph") {
                     override fun run(progressIndicator: ProgressIndicator) {
-                        ApplicationManager
-                                .getApplication()
-                                .invokeLater(runnable)
+                        ApplicationManager.getApplication().invokeLater(runnable)
                     }
                 })
     }
@@ -167,10 +159,7 @@ object Utils {
         val bestFitBaseline = 0.1f // make the best fit window between 0.1 - 0.9 of the viewport
         val bestFitSize = 1 - 2 * bestFitBaseline
         return blueprint.mapValues { (_, point) ->
-            Point2D.Float(
-                    (point.x - minPoint.x) / graphSize.x * bestFitSize + bestFitBaseline,
-                    (point.y - minPoint.y) / graphSize.y * bestFitSize + bestFitBaseline
-            )
+            Point2D.Float((point.x - minPoint.x) / graphSize.x * bestFitSize + bestFitBaseline, (point.y - minPoint.y) / graphSize.y * bestFitSize + bestFitBaseline)
         }
     }
 
@@ -178,14 +167,8 @@ object Utils {
         val project = anActionEvent.project
         val psiElement = anActionEvent.getData(CommonDataKeys.PSI_ELEMENT) // get the element under editor caret
         if (project != null && psiElement is PsiMethod) {
-            ToolWindowManager.getInstance(project)
-                    .getToolWindow("Call Graph")
-                    ?.activate {
-                        ServiceManager.getService(project, CallGraphToolWindowProjectService::class.java)
-                                .callGraphToolWindow
-                                .clearFocusedMethods()
-                                .toggleFocusedMethod(psiElement)
-                                .run(buildType)
+            ToolWindowManager.getInstance(project).getToolWindow("Call Graph")?.activate {
+                        ServiceManager.getService(project, CallGraphToolWindowProjectService::class.java).callGraphToolWindow.clearFocusedMethods().toggleFocusedMethod(psiElement).run(buildType)
                     }
         }
     }
@@ -209,64 +192,30 @@ object Utils {
         return getSourceCodeFiles(project, sourceCodeRoots)
     }
 
-    fun getSourceCodeFiles(project: Project, sourceCodeRoots: Set<VirtualFile>) =
-            sourceCodeRoots
-                    .flatMap { contentSourceRoot ->
-                        val childrenVirtualFiles = mutableListOf<VirtualFile>()
-                        VfsUtilCore.iterateChildrenRecursively(contentSourceRoot, null, {
-                            if (it.isValid && !it.isDirectory) {
-                                val extension = it.extension
-                                if (extension.equals("java")) {
-                                    childrenVirtualFiles.add(it)
-                                }
-                            }
-                            true
-                        })
-                        childrenVirtualFiles
+    fun getSourceCodeFiles(project: Project, sourceCodeRoots: Set<VirtualFile>) = sourceCodeRoots.flatMap { contentSourceRoot ->
+                val childrenVirtualFiles = mutableListOf<VirtualFile>()
+                VfsUtilCore.iterateChildrenRecursively(contentSourceRoot, null, {
+                    if (it.isValid && !it.isDirectory) {
+                        val extension = it.extension
+                        if (extension.equals("java")) {
+                            childrenVirtualFiles.add(it)
+                        }
                     }
-                    .mapNotNull { PsiManager.getInstance(project).findFile(it) }
-                    .toSet()
+                    true
+                })
+                childrenVirtualFiles
+            }.mapNotNull { PsiManager.getInstance(project).findFile(it) }.toSet()
 
     fun applyLayoutBlueprintToGraph(blueprint: Map<String, Point2D.Float>, graph: Graph) {
         blueprint.forEach { (nodeId, point) -> graph.getNode(nodeId).point.setLocation(point) }
     }
 
-    fun getSourceCodeRoots(canvasConfig: CanvasConfig) =
-            when (canvasConfig.buildType) {
-                CanvasConfig.BuildType.WHOLE_PROJECT_WITH_TEST_LIMITED,
-                CanvasConfig.BuildType.WHOLE_PROJECT_WITH_TEST ->
-                    getAllSourceCodeRoots(canvasConfig.project)
-                CanvasConfig.BuildType.WHOLE_PROJECT_WITHOUT_TEST_LIMITED,
-                CanvasConfig.BuildType.WHOLE_PROJECT_WITHOUT_TEST ->
-                    getActiveModules(canvasConfig.project)
-                            .flatMap { ModuleRootManager.getInstance(it).getSourceRoots(false).toSet() }
-                            .toSet()
-                CanvasConfig.BuildType.MODULE_LIMITED, CanvasConfig.BuildType.MODULE ->
-                    getSelectedModules(canvasConfig.project, canvasConfig.selectedModuleName)
-                            .flatMap { ModuleRootManager.getInstance(it).sourceRoots.toSet() }
-                            .toSet()
-                CanvasConfig.BuildType.DIRECTORY_LIMITED,
-                CanvasConfig.BuildType.DIRECTORY -> {
-                    val directoryPath = canvasConfig.selectedDirectoryPath
-                    listOfNotNull(LocalFileSystem.getInstance().findFileByPath(directoryPath)).toSet()
-                }
-                else -> emptySet()
-            }
-
-    private fun getNestedDependencyView(
-            dependencies: Set<Dependency>,
-            methods: Set<PsiMethod>,
-            seenMethods: MutableSet<PsiMethod>,
-            isUpstream: Boolean
-    ): Set<Dependency> {
+    private fun getNestedDependencyView(dependencies: Set<CallPair>, methods: Set<PsiMethod>, seenMethods: MutableSet<PsiMethod>, isUpstream: Boolean): Set<CallPair> {
         if (methods.isEmpty()) {
             return emptySet()
         }
         val directPairs = dependencies.filter { methods.contains(if (isUpstream) it.callee else it.caller) }.toSet()
-        val nextBatchMethods = directPairs
-                .map { if (isUpstream) it.caller else it.callee }
-                .filter { !seenMethods.contains(it) }
-                .toSet()
+        val nextBatchMethods = directPairs.map { if (isUpstream) it.caller else it.callee }.filter { !seenMethods.contains(it) }.toSet()
         seenMethods.addAll(nextBatchMethods)
         val nestedPairs = getNestedDependencyView(dependencies, nextBatchMethods, seenMethods, isUpstream)
         return directPairs + nestedPairs
@@ -275,33 +224,20 @@ object Utils {
     private fun getLayoutFromGraphViz(graph: Graph): Map<String, Point2D.Float> {
         // if graph only has one node, just set its coordinate to (0.5, 0.5), no need to call GraphViz
         if (graph.getNodes().size == 1) {
-            return graph.getNodes()
-                    .map { it.id to Point2D.Float(0.5f, 0.5f) }
-                    .toMap()
+            return graph.getNodes().map { it.id to Point2D.Float(0.5f, 0.5f) }.toMap()
         }
         // construct the GraphViz graph
-        val gvGraph = mutGraph("test")
-                .setDirected(true)
-                .graphAttrs()
-                .add(Rank.dir(Rank.RankDir.LEFT_TO_RIGHT))
-        graph.getNodes()
-                .sortedBy { it.method.name }
-                .forEach { node ->
+        val gvGraph = mutGraph("test").setDirected(true).graphAttrs().add(Rank.dir(Rank.RankDir.LEFT_TO_RIGHT))
+        graph.getNodes().sortedBy { it.method.name }.forEach { node ->
                     val gvNode = mutNode(node.id)
-                    node.outEdges.values
-                            .map { it.targetNode }
-                            .sortedBy { it.method.name }
-                            .forEach { gvNode.addLink(it.id) }
+                    node.outEdges.values.map { it.targetNode }.sortedBy { it.method.name }.forEach { gvNode.addLink(it.id) }
                     gvGraph.add(gvNode)
                 }
 
         // parse the GraphViz layout as a mapping from "node name" to "x-y coordinate (percent of full graph size)"
         // GraphViz doc: https://graphviz.gitlab.io/_pages/doc/info/output.html#d:plain
         val layoutRawText = Graphviz.fromGraph(gvGraph).render(Format.PLAIN).toString()
-        return layoutRawText.split("\n")
-                .filter { it.startsWith("node") }
-                .map { it.split(" ") }
-                .map { it[1] to Point2D.Float(it[2].toFloat(), it[3].toFloat()) } // (x, y)
+        return layoutRawText.split("\n").filter { it.startsWith("node") }.map { it.split(" ") }.map { it[1] to Point2D.Float(it[2].toFloat(), it[3].toFloat()) } // (x, y)
                 .toMap()
     }
 
@@ -320,10 +256,7 @@ object Utils {
         val precisionFactor = 1000
         val xUniqueValues = blueprint.values.map { Math.round(precisionFactor * it.x) }.toSet()
         val yUniqueValues = blueprint.values.map { Math.round(precisionFactor * it.y) }.toSet()
-        return Point2D.Float(
-                getAverageElementDifference(xUniqueValues) / precisionFactor,
-                getAverageElementDifference(yUniqueValues) / precisionFactor
-        )
+        return Point2D.Float(getAverageElementDifference(xUniqueValues) / precisionFactor, getAverageElementDifference(yUniqueValues) / precisionFactor)
     }
 
     private fun getAverageElementDifference(elements: Set<Int>): Float {
@@ -336,8 +269,7 @@ object Utils {
         if (blueprints.isEmpty()) {
             return emptyMap()
         }
-        val blueprintSizes = blueprints
-                .map { blueprint ->
+        val blueprintSizes = blueprints.map { blueprint ->
                     val xPoints = blueprint.values.map { it.x }
                     val yPoints = blueprint.values.map { it.y }
                     val max = Point2D.Float(xPoints.maxOrNull() ?: 0f, yPoints.maxOrNull() ?: 0f)
@@ -347,28 +279,20 @@ object Utils {
                     Triple(blueprint, height, width)
                 }
         val sortedHeights = blueprintSizes.map { (_, height, _) -> height }.sortedBy { -it }
-        val sortedBlueprints = blueprintSizes
-                .toList()
-                .sortedWith(compareBy({ (_, height, _) -> -height }, { (_, _, width) -> -width }))
-                .map { (blueprint, _, _) -> blueprint }
+        val sortedBlueprints = blueprintSizes.toList().sortedWith(compareBy({ (_, height, _) -> -height }, { (_, _, width) -> -width })).map { (blueprint, _, _) -> blueprint }
         val baseline = Point2D.Float(0.5f, 0.5f)
         // put the left-most point of the first sub-graph in the view center, by using its y value as central line
         val yCentralLine = sortedBlueprints.first().values.minByOrNull { it.x }?.y ?: 0f
-        return sortedBlueprints
-                .mapIndexed { index, blueprint ->
+        return sortedBlueprints.mapIndexed { index, blueprint ->
                     // calculate the y-offset of this sub-graph (by summing up all the height of previous sub-graphs)
                     val yOffset = sortedHeights.subList(0, index).sum()
                     // left align the graph by the left-most nodesMap, then centering the baseline
                     val minX = blueprint.values.map { it.x }.minOrNull() ?: 0f
                     //noinspection UnnecessaryLocalVariable
                     blueprint.mapValues { (_, point) ->
-                        Point2D.Float(
-                                point.x - minX + baseline.x,
-                                point.y + yOffset - yCentralLine + baseline.y
-                        )
+                        Point2D.Float(point.x - minX + baseline.x, point.y + yOffset - yCentralLine + baseline.y)
                     }
-                }
-                .reduce { blueprintA, blueprintB -> blueprintA + blueprintB }
+                }.reduce { blueprintA, blueprintB -> blueprintA + blueprintB }
     }
 
     private fun applyRawLayoutBlueprintToGraph(blueprint: Map<String, Point2D.Float>, graph: Graph) {
